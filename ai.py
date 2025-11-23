@@ -1,24 +1,30 @@
-# dashboard_text_summarizer.py
+# ai.py  (main Streamlit app)
 
 import time
 from collections import Counter
 
 import requests
 import streamlit as st
-from pypdf import PdfReader
 import textstat
 from bs4 import BeautifulSoup
 from transformers import pipeline, AutoTokenizer
 from wordcloud import WordCloud
+import pdfplumber
+
 
 # ------------------ LOAD SUMMARIZATION MODEL (FLAN-T5) ------------------ #
 @st.cache_resource
 def load_model():
-    # FLAN-T5 tends to respect length controls better than BART
+    """
+    Load the FLAN-T5 model wrapped in a HuggingFace pipeline.
+    FLAN-T5 respects length controls better than BART.
+    """
     return pipeline("summarization", model="google/flan-t5-large")
+
 
 summarizer = load_model()
 tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-large")
+
 
 # ------------------ STREAMLIT CONFIG ------------------ #
 st.set_page_config(
@@ -29,8 +35,14 @@ st.set_page_config(
 
 # ------------------ SIDEBAR ------------------ #
 st.sidebar.title("⚙️ Options")
-input_type = st.sidebar.radio("Choose Input Type:", ["✍️ Text", "🌐 URL", "📄 PDF Upload"])
-style = st.sidebar.selectbox("Summary Style:", ["Concise", "Detailed", "Bullet Points"])
+input_type = st.sidebar.radio(
+    "Choose Input Type:",
+    ["✍️ Text", "🌐 URL", "📄 PDF Upload"]
+)
+style = st.sidebar.selectbox(
+    "Summary Style:",
+    ["Concise", "Detailed", "Bullet Points"]
+)
 theme = st.sidebar.checkbox("🌙 Dark Mode")
 st.sidebar.markdown("---")
 st.sidebar.info("Powered by FLAN-T5 + Streamlit")
@@ -65,16 +77,20 @@ elif input_type == "🌐 URL":
         try:
             page = requests.get(url)
             soup = BeautifulSoup(page.text, "html.parser")
-            # Extract all <p> tag text
+            # Extract text from all <p> tags
             text = " ".join(
                 [p.get_text(separator=" ", strip=True) for p in soup.find_all("p")]
             )
             word_count = len(text.split())
             if word_count > 0:
-                st.success(f"✅ Article fetched successfully! Extracted ~{word_count} words.")
+                st.success(
+                    f"✅ Article fetched successfully! Extracted ~{word_count} words."
+                )
             else:
-                st.warning("⚠️ Article fetched, but extracted very little text. "
-                           "The site may be JS-heavy or protected.")
+                st.warning(
+                    "⚠️ Article fetched, but extracted very little text. "
+                    "The site may be JS-heavy or protected."
+                )
         except Exception as e:
             st.error(f"❌ Failed to fetch article. Error: {e}")
 
@@ -82,32 +98,38 @@ elif input_type == "📄 PDF Upload":
     uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
     if uploaded_file:
         try:
-            doc = fitz.open(stream=uploaded_file.read(), filetype="pdf")
-            text_chunks = []
-            for page in doc:
-                text_chunks.append(page.get_text("text"))
-            text = "\n".join(text_chunks)
+            text_pages = []
+            with pdfplumber.open(uploaded_file) as pdf:
+                for page in pdf.pages:
+                    extracted = page.extract_text() or ""
+                    text_pages.append(extracted)
+            text = "\n".join(text_pages)
             word_count = len(text.split())
             if word_count > 0:
-                st.success(f"✅ PDF text extracted successfully! Extracted ~{word_count} words.")
+                st.success(
+                    f"✅ PDF text extracted successfully! Extracted ~{word_count} words."
+                )
             else:
-                st.warning("⚠️ PDF opened, but extracted very little text. "
-                           "It may be scanned images (needs OCR).")
+                st.warning(
+                    "⚠️ PDF opened, but extracted very little text. "
+                    "It may be scanned images (needs OCR)."
+                )
         except Exception as e:
             st.error(f"❌ Failed to read PDF. Error: {e}")
 
-# Optional: show how much text we actually have
+# Optional debug/info
 if text:
     st.caption(f"Loaded ~{len(text.split())} words from input.")
 
 
 # ------------------ CHUNKING FUNCTION (WORD-BASED, TOKEN-AWARE) ------------------ #
-def chunk_text(text: str, max_tokens: int = 900):
+def chunk_text(full_text: str, max_tokens: int = 900):
     """
-    Split the full text into chunks whose token length (FLAN-T5 tokenizer)
-    stays under `max_tokens`, while preserving *all* words.
+    Split the full text into chunks whose token length
+    (using FLAN-T5 tokenizer) stays under `max_tokens`,
+    while preserving *all* words.
     """
-    words = text.split()
+    words = full_text.split()
     chunks = []
     current_words = []
 
@@ -140,7 +162,7 @@ def clean_summary(summary_text: str, original_text: str) -> str:
         "samaritans",
         "self-harm",
         "crisis hotline",
-        "helpline"
+        "helpline",
     ]
 
     orig_words = set(original_text.lower().split())
@@ -155,15 +177,15 @@ def clean_summary(summary_text: str, original_text: str) -> str:
 
         s_lower = s.lower()
 
-        # Remove obviously inappropriate or out-of-domain boilerplate
+        # Filter obviously inappropriate boilerplate
         if any(bp in s_lower for bp in bad_phrases):
             continue
 
-        # Lexical overlap filter: drop sentences that share almost nothing
+        # Lexical overlap filter
         words = set(s_lower.split())
         overlap = len(words & orig_words) / max(1, len(words))
         if overlap < 0.15:
-            # Too little overlap with the original → likely hallucination
+            # Very little overlap → likely hallucinated / off-topic
             continue
 
         if not s.endswith("."):
@@ -202,12 +224,12 @@ if st.button("🚀 Generate Summary"):
 
             # --- Length control (Concise vs Detailed vs Bullet) ---
             if style == "Concise":
-                # Aim for ~30–40% of chunk length, within safe bounds
+                # ~30–40% of chunk length, within safe bounds
                 max_len = min(160, max(60, int(words_in_chunk * 0.4)))
                 min_len = min(max_len - 10, max(30, int(words_in_chunk * 0.2)))
 
             elif style == "Detailed":
-                # Aim for ~60–80% of chunk length, much longer than Concise
+                # ~60–80% of chunk length, longer than Concise
                 max_len = min(360, max(180, int(words_in_chunk * 0.8)))
                 min_len = min(max_len - 20, max(120, int(words_in_chunk * 0.4)))
 
@@ -220,14 +242,13 @@ if st.button("🚀 Generate Summary"):
             if min_len >= max_len:
                 min_len = max_len // 2
 
-            # FLAN-T5 respects these lengths well
             summary_chunk = summarizer(
                 chunk,
                 max_length=max_len,
                 min_length=min_len,
                 length_penalty=0.1,      # encourage longer outputs
                 no_repeat_ngram_size=3,
-                do_sample=False
+                do_sample=False,
             )
 
             all_summaries.append(summary_chunk[0]["summary_text"])
@@ -319,4 +340,3 @@ if st.button("🚀 Generate Summary"):
             summary_text,
             file_name="summary.txt"
         )
-        
