@@ -5,7 +5,7 @@ from collections import Counter
 
 import requests
 import streamlit as st
-import fitz  # PyMuPDF
+from pypdf import PdfReader
 import textstat
 from bs4 import BeautifulSoup
 from transformers import pipeline, AutoTokenizer
