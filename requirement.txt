@@ -1,0 +1,9 @@
+streamlit
+transformers
+torch
+sentencepiece
+pymupdf
+beautifulsoup4
+requests
+wordcloud
+textstat
