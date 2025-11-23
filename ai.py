@@ -5,7 +5,6 @@ from collections import Counter
 
 import requests
 import streamlit as st
-import textstat
 from bs4 import BeautifulSoup
 from transformers import pipeline, AutoTokenizer
 from wordcloud import WordCloud
@@ -117,7 +116,7 @@ elif input_type == "📄 PDF Upload":
         except Exception as e:
             st.error(f"❌ Failed to read PDF. Error: {e}")
 
-# Optional debug/info
+# Optional info
 if text:
     st.caption(f"Loaded ~{len(text.split())} words from input.")
 
@@ -321,17 +320,13 @@ if st.button("🚀 Generate Summary"):
         else:
             st.write("No summary text available for word cloud.")
 
-        st.markdown("### 📖 Readability & Stats")
+        # ------------------ BASIC SUMMARY STATS ------------------ #
+        st.markdown("### 📖 Summary Stats")
         if summary_text.strip():
-            try:
-                grade_level = textstat.flesch_kincaid_grade(summary_text)
-                st.write(f"**Flesch-Kincaid Grade Level:** {grade_level:.2f}")
-            except Exception as e:
-                st.write(f"Could not compute readability: {e}")
             st.write(f"**Number of Sentences:** {len(summary_text.split('. '))}")
             st.write(f"**Number of Characters:** {len(summary_text)}")
         else:
-            st.write("No summary text available for readability analysis.")
+            st.write("No summary text available for analysis.")
 
         # ------------------ DOWNLOAD ------------------ #
         st.markdown("---")
